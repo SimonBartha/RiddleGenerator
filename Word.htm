@@ -26,7 +26,7 @@
   <input type="text" id="wordInput" maxlength="20" />
   <button onclick="generateRiddle()">Generate</button>
   <button onclick="downloadImage()">Download as Image</button>
-  <canvas id="canvas" width="900" height="400"></canvas>
+  <canvas id="canvas" width="1000" height="400"></canvas>
 
   <script>
     const canvas = document.getElementById("canvas");
@@ -38,6 +38,8 @@
       "#008080", "#e6beff", "#9A6324", "#fffac8", "#800000"
     ];
 
+    let drawingBounds = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
+
     function shuffle(array) {
       let a = [...array];
       for (let i = a.length - 1; i > 0; i--) {
@@ -47,19 +49,29 @@
       return a;
     }
 
+    function trackBounds(x, y) {
+      drawingBounds.minX = Math.min(drawingBounds.minX, x);
+      drawingBounds.maxX = Math.max(drawingBounds.maxX, x);
+      drawingBounds.minY = Math.min(drawingBounds.minY, y);
+      drawingBounds.maxY = Math.max(drawingBounds.maxY, y);
+    }
+
     function drawSlalomLine(x1, y1, x2, y2, color) {
-      const segments = 5;
+      const segments = 6;
       const dx = (x2 - x1) / segments;
       const dy = (y2 - y1) / segments;
 
       ctx.beginPath();
       ctx.moveTo(x1, y1);
+      trackBounds(x1, y1);
       for (let i = 1; i < segments; i++) {
         const cx = x1 + i * dx;
         const cy = y1 + i * dy + (Math.random() * 80 - 40);
         ctx.lineTo(cx, cy);
+        trackBounds(cx, cy);
       }
       ctx.lineTo(x2, y2);
+      trackBounds(x2, y2);
       ctx.strokeStyle = color;
       ctx.lineWidth = 2;
       ctx.stroke();
@@ -70,6 +82,7 @@
       if (!word || word.length < 2) return alert("Please enter a word with at least 2 letters.");
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawingBounds = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
 
       const scrambled = shuffle([...word]);
       const boxWidth = 60;
@@ -77,11 +90,13 @@
       const topY = 100;
       const bottomY = 280;
 
-      // Draw top letters (scrambled)
+      // Draw scrambled letters
       scrambled.forEach((letter, i) => {
+        const x = startX + i * boxWidth + 15;
         ctx.font = "30px Arial";
         ctx.fillStyle = colors[i % colors.length];
-        ctx.fillText(letter, startX + i * boxWidth + 15, topY);
+        ctx.fillText(letter, x, topY);
+        trackBounds(x, topY);
       });
 
       // Draw empty boxes
@@ -89,22 +104,45 @@
         const x = startX + i * boxWidth;
         ctx.strokeStyle = "#000";
         ctx.strokeRect(x, bottomY, boxWidth - 10, 50);
+        trackBounds(x, bottomY);
+        trackBounds(x + boxWidth - 10, bottomY + 50);
       });
 
-      // Draw slalom lines from top to bottom
+      // Draw lines
       word.split("").forEach((letter, i) => {
         const targetX = startX + i * boxWidth + (boxWidth - 10) / 2;
         const scrambledIndex = scrambled.findIndex(l => l === letter);
         const sourceX = startX + scrambledIndex * boxWidth + 20;
         drawSlalomLine(sourceX, topY + 5, targetX, bottomY, colors[i % colors.length]);
-        scrambled[scrambledIndex] = null; // prevent duplicate connections
+        scrambled[scrambledIndex] = null;
       });
     }
 
     function downloadImage() {
+      const margin = 20;
+      const { minX, minY, maxX, maxY } = drawingBounds;
+
+      const cropWidth = maxX - minX + margin * 2;
+      const cropHeight = maxY - minY + margin * 2;
+
+      const croppedCanvas = document.createElement("canvas");
+      croppedCanvas.width = cropWidth;
+      croppedCanvas.height = cropHeight;
+      const croppedCtx = croppedCanvas.getContext("2d");
+
+      // White background
+      croppedCtx.fillStyle = "#ffffff";
+      croppedCtx.fillRect(0, 0, cropWidth, cropHeight);
+
+      croppedCtx.drawImage(
+        canvas,
+        minX - margin, minY - margin, cropWidth, cropHeight,
+        0, 0, cropWidth, cropHeight
+      );
+
       const link = document.createElement("a");
       link.download = "riddle.png";
-      link.href = canvas.toDataURL();
+      link.href = croppedCanvas.toDataURL("image/png");
       link.click();
     }
   </script>
