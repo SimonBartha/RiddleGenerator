@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Word Riddle Generator</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      margin: 40px;
+    }
+    input, button {
+      font-size: 18px;
+      padding: 8px;
+      margin: 5px;
+    }
+    #canvas {
+      border: 1px solid #ccc;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Word Riddle Generator</h1>
+  <p>Enter a word to generate a riddle:</p>
+  <input type="text" id="wordInput" maxlength="20" />
+  <button onclick="generateRiddle()">Generate</button>
+  <button onclick="downloadImage()">Download as Image</button>
+  <canvas id="canvas" width="900" height="400"></canvas>
+
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+
+    const colors = [
+      "#e6194B", "#3cb44b", "#ffe119", "#4363d8", "#f58231",
+      "#911eb4", "#46f0f0", "#f032e6", "#bcf60c", "#fabebe",
+      "#008080", "#e6beff", "#9A6324", "#fffac8", "#800000"
+    ];
+
+    function shuffle(array) {
+      let a = [...array];
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    }
+
+    function drawSlalomLine(x1, y1, x2, y2, color) {
+      const segments = 5;
+      const dx = (x2 - x1) / segments;
+      const dy = (y2 - y1) / segments;
+
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      for (let i = 1; i < segments; i++) {
+        const cx = x1 + i * dx;
+        const cy = y1 + i * dy + (Math.random() * 80 - 40);
+        ctx.lineTo(cx, cy);
+      }
+      ctx.lineTo(x2, y2);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    function generateRiddle() {
+      const word = document.getElementById("wordInput").value;
+      if (!word || word.length < 2) return alert("Please enter a word with at least 2 letters.");
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const scrambled = shuffle([...word]);
+      const boxWidth = 60;
+      const startX = 80;
+      const topY = 100;
+      const bottomY = 280;
+
+      // Draw top letters (scrambled)
+      scrambled.forEach((letter, i) => {
+        ctx.font = "30px Arial";
+        ctx.fillStyle = colors[i % colors.length];
+        ctx.fillText(letter, startX + i * boxWidth + 15, topY);
+      });
+
+      // Draw empty boxes
+      word.split("").forEach((_, i) => {
+        const x = startX + i * boxWidth;
+        ctx.strokeStyle = "#000";
+        ctx.strokeRect(x, bottomY, boxWidth - 10, 50);
+      });
+
+      // Draw slalom lines from top to bottom
+      word.split("").forEach((letter, i) => {
+        const targetX = startX + i * boxWidth + (boxWidth - 10) / 2;
+        const scrambledIndex = scrambled.findIndex(l => l === letter);
+        const sourceX = startX + scrambledIndex * boxWidth + 20;
+        drawSlalomLine(sourceX, topY + 5, targetX, bottomY, colors[i % colors.length]);
+        scrambled[scrambledIndex] = null; // prevent duplicate connections
+      });
+    }
+
+    function downloadImage() {
+      const link = document.createElement("a");
+      link.download = "riddle.png";
+      link.href = canvas.toDataURL();
+      link.click();
+    }
+  </script>
+</body>
+</html>
