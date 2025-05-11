@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Configurable Sudoku</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      position: relative; /* for victory message positioning */
+    }
+
+    #controls {
+      margin-bottom: 15px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+    }
+    .slider-label {
+      font-weight: bold;
+      margin-bottom: 4px;
+    }
+
+    #sudoku-container {
+      display: inline-block;
+      border: 2px solid black;
+      margin-bottom: 20px;
+    }
+
+    table {
+      border-collapse: collapse;
+      margin: 0 auto;
+    }
+
+    td {
+      width: 40px;  /* Adjust to your liking */
+      height: 40px;
+      text-align: center;
+      border: 1px solid #888;
+      vertical-align: middle;
+      position: relative;
+    }
+
+    /* Drag & drop hover highlight */
+    td.drop-hover {
+      outline: 2px dashed #000;
+    }
+
+    /* Thicker box boundary (drawn by row/col indices) */
+    .box-right {
+      border-right: 2px solid #000 !important;
+    }
+    .box-bottom {
+      border-bottom: 2px solid #000 !important;
+    }
+
+    /* Missing numbers container */
+    #missing-numbers {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-bottom: 10px;
+      max-width: 600px;
+    }
+
+    /* Draggable SVG wrapper */
+    .draggable-wrapper {
+      cursor: move;
+      width: 40px;
+      height: 40px;
+    }
+
+    /* Conflict highlighting/animation for row/column/box */
+    .conflict {
+      animation: conflictFlash 1s linear;
+      background-color: #ffcccc !important; 
+    }
+    @keyframes conflictFlash {
+      0%   { background-color: #ffcccc; }
+      50%  { background-color: #ff6666; }
+      100% { background-color: transparent; }
+    }
+
+    /* Victory animation / message */
+    #victory {
+      font-size: 2em;
+      color: green;
+      animation: fadeOut 3s forwards;
+      position: absolute;
+      top: 40%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255,255,255,0.8);
+      padding: 20px;
+      border-radius: 10px;
+      display: none;
+      text-align: center;
+    }
+
+    @keyframes fadeOut {
+      0%   { opacity: 1; }
+      80%  { opacity: 1; }
+      100% { opacity: 0; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Configurable Sudoku (4 to 9)</h1>
+
+  <div id="controls">
+    <!-- Board size slider -->
+    <div class="control-group">
+      <label class="slider-label" for="sizeSlider">Board Size:</label>
+      <input type="range" id="sizeSlider" min="4" max="9" value="4" />
+      <span id="sizeValue">4</span>×<span id="sizeValue2">4</span>
+    </div>
+
+    <!-- Difficulty slider -->
+    <div class="control-group">
+      <label class="slider-label" for="difficultySlider">Difficulty:</label>
+      <input type="range" id="difficultySlider" min="1" max="6" step="1" value="2" />
+      <span id="diffValue">2</span>
+    </div>
+
+    <button id="newPuzzleBtn">Generate New Puzzle</button>
+  </div>
+
+  <div id="missing-numbers"></div>
+
+  <div id="sudoku-container">
+    <table id="sudoku-grid"></table>
+  </div>
+
+  <div id="victory">Congratulations! You solved it!</div>
+
+  <script>
+    /*****************************************/
+    /*         DOM ELEMENT REFERENCES        */
+    /*****************************************/
+    const sizeSlider = document.getElementById("sizeSlider");
+    const sizeValue  = document.getElementById("sizeValue");
+    const sizeValue2 = document.getElementById("sizeValue2");
+    const difficultySlider = document.getElementById("difficultySlider");
+    const diffValue = document.getElementById("diffValue");
+    const sudokuGrid = document.getElementById("sudoku-grid");
+    const missingNumbersDiv = document.getElementById("missing-numbers");
+    const victoryEl = document.getElementById("victory");
+
+    /*****************************************/
+    /*          EVENT LISTENERS              */
+    /*****************************************/
+    // Update displayed board size as slider moves
+    sizeSlider.addEventListener("input", () => {
+      sizeValue.textContent = sizeSlider.value;
+      sizeValue2.textContent = sizeSlider.value;
+    });
+    // Update displayed difficulty as slider moves
+    difficultySlider.addEventListener("input", () => {
+      diffValue.textContent = difficultySlider.value;
+    });
+
+    document.getElementById("newPuzzleBtn").addEventListener("click", createNewPuzzle);
+
+    /*****************************************/
+    /*        SVG / VISUAL GENERATION        */
+    /*****************************************/
+    const svgColors = {
+      1: "#ffaaaa",
+      2: "#aaffaa",
+      3: "#aaaaff",
+      4: "#ffd480",
+      5: "#c3f0f0",
+      6: "#f0c3ed",
+      7: "#e2f0c3",
+      8: "#f0e6c3",
+      9: "#d9c3f0"
+    };
+
+    function createNumberSVG(num, cellSize=40) {
+      const fillColor = svgColors[num] || "#ffffff";
+      // We match the cell width/height so the circle fits nicely
+      return `
+        <svg width="${cellSize}" height="${cellSize}" viewBox="0 0 50 50"
+             xmlns="http://www.w3.org/2000/svg">
+          <circle cx="25" cy="25" r="20"
+                  fill="${fillColor}" stroke="black" stroke-width="2"></circle>
+          <text x="50%" y="50%" text-anchor="middle" dy=".3em"
+                font-size="24" fill="black" font-weight="bold">${num}</text>
+        </svg>
+      `;
+    }
+
+    /*****************************************/
+    /*         SUDOKU LOGIC & DATA           */
+    /*****************************************/
+    let dimension = 4;           // Current board dimension
+    let puzzleBoard = [];        // 2D array with puzzle state (0 = empty)
+    let solutionBoard = [];      // 2D array with solution
+
+    /**
+     * Generate a brand-new puzzle:
+     * 1) Read the dimension from slider
+     * 2) Generate a full solution via backtracking
+     * 3) Dig holes for difficulty
+     * 4) Render puzzle
+     */
+    function createNewPuzzle() {
+      dimension = parseInt(sizeSlider.value);
+
+      // 1) Generate a random completed board of size 'dimension'
+      solutionBoard = generateFullSolution(dimension);
+
+      // 2) Dig holes based on difficulty
+      const holesCount = parseInt(difficultySlider.value) + Math.floor(dimension*dimension/8);
+      puzzleBoard = removeCells(solutionBoard, holesCount);
+
+      // 3) Render puzzle
+      renderPuzzle();
+    }
+
+    /**
+     * Generate a full valid Sudoku solution for a d×d board (numbers 1..d),
+     * ensuring row, column, and sub-box constraints.
+     */
+    function generateFullSolution(d) {
+      // Start with an empty board
+      const board = Array.from({ length: d }, () => Array(d).fill(0));
+
+      // Determine sub-box dimensions
+      const [boxR, boxC] = getBoxDimensions(d);
+
+      // Fill the board via backtracking
+      backtrackFill(board, d, boxR, boxC);
+
+      return board;
+    }
+
+    /**
+     * Find sub-box dimensions for a d×d Sudoku by picking factor pair (r,c)
+     * close to sqrt(d). For standard 4 => (2,2), 9 => (3,3).
+     * For 6 => (2,3), for 8 => (2,4), for prime 5 or 7 => (1,d).
+     */
+    function getBoxDimensions(d) {
+      let bestPair = [1, d];
+      const sqrtD = Math.sqrt(d);
+      // Find factor pairs
+      for (let r = 1; r <= d; r++) {
+        if (d % r === 0) {
+          let c = d / r;
+          // measure closeness to square
+          const diff1 = Math.abs(r - sqrtD);
+          const diff2 = Math.abs(bestPair[0] - sqrtD);
+          // if this factor pair is "closer" to sqrt, prefer it
+          if (diff1 < diff2) {
+            bestPair = [r, c];
+          }
+        }
+      }
+      return bestPair; // e.g. (2,2) for 4, (3,3) for 9, (2,3) for 6...
+    }
+
+    /**
+     * Backtracking fill: fill 'board' in-place with numbers 1..d so that
+     * each row, col, and sub-box (boxR × boxC) is valid.
+     */
+    function backtrackFill(board, d, boxR, boxC) {
+      // Find the first empty cell
+      const [row, col] = findEmptyCell(board);
+      if (row === -1) {
+        // No empty cell => success
+        return true;
+      }
+
+      // Try numbers 1..d in random order
+      const nums = [...Array(d).keys()].map(x => x+1);
+      shuffleArray(nums);
+
+      for (let n of nums) {
+        if (canPlace(board, row, col, n, boxR, boxC)) {
+          board[row][col] = n;
+          if (backtrackFill(board, d, boxR, boxC)) {
+            return true;
+          }
+          // revert
+          board[row][col] = 0;
+        }
+      }
+      // No success => backtrack
+      return false;
+    }
+
+    function findEmptyCell(board) {
+      for (let r = 0; r < board.length; r++) {
+        for (let c = 0; c < board[r].length; c++) {
+          if (board[r][c] === 0) {
+            return [r, c];
+          }
+        }
+      }
+      return [-1, -1];
+    }
+
+    function canPlace(board, row, col, val, boxR, boxC) {
+      // Check row
+      for (let c = 0; c < board.length; c++) {
+        if (board[row][c] === val) return false;
+      }
+      // Check column
+      for (let r = 0; r < board.length; r++) {
+        if (board[r][col] === val) return false;
+      }
+      // Check sub-box
+      const startR = Math.floor(row / boxR) * boxR;
+      const startC = Math.floor(col / boxC) * boxC;
+      for (let rr = startR; rr < startR + boxR; rr++) {
+        for (let cc = startC; cc < startC + boxC; cc++) {
+          if (board[rr][cc] === val) return false;
+        }
+      }
+      return true;
+    }
+
+    /**
+     * Remove 'holesCount' cells at random from a full solution to create a puzzle.
+     * (No guarantee of uniqueness in this simple example.)
+     */
+    function removeCells(fullBoard, holesCount) {
+      const puzzle = fullBoard.map(row => row.slice()); // deep copy
+
+      let emptyCount = holesCount;
+      const size = puzzle.length;
+      while (emptyCount > 0) {
+        const r = Math.floor(Math.random() * size);
+        const c = Math.floor(Math.random() * size);
+        if (puzzle[r][c] !== 0) {
+          puzzle[r][c] = 0;
+          emptyCount--;
+        }
+      }
+      return puzzle;
+    }
+
+    /*****************************************/
+    /*        RENDERING & INTERACTION        */
+    /*****************************************/
+    function renderPuzzle() {
+      sudokuGrid.innerHTML = "";
+      const d = puzzleBoard.length;
+      const [boxR, boxC] = getBoxDimensions(d);
+
+      // Build the HTML table
+      for (let r = 0; r < d; r++) {
+        const rowEl = document.createElement("tr");
+        for (let c = 0; c < d; c++) {
+          const cellEl = document.createElement("td");
+          // Thicker lines for box boundaries
+          // Example: for 4×4 with box (2,2), we want a thicker line after col=1, row=1
+          // We'll do a line if (c+1) % boxC == 0, except for the last col
+          if ((c+1) % boxC === 0 && c+1 < d) {
+            cellEl.classList.add("box-right");
+          }
+          if ((r+1) % boxR === 0 && r+1 < d) {
+            cellEl.classList.add("box-bottom");
+          }
+
+          const val = puzzleBoard[r][c];
+          if (val !== 0) {
+            // Filled cell => show SVG
+            cellEl.innerHTML = createNumberSVG(val, 40);
+          } else {
+            // Empty cell => droppable area
+            cellEl.setAttribute("data-row", r);
+            cellEl.setAttribute("data-col", c);
+            cellEl.addEventListener("dragover", handleDragOver);
+            cellEl.addEventListener("dragleave", handleDragLeave);
+            cellEl.addEventListener("drop", handleDrop);
+          }
+          rowEl.appendChild(cellEl);
+        }
+        sudokuGrid.appendChild(rowEl);
+      }
+
+      // Render the missing numbers on top
+      renderMissingNumbers();
+    }
+
+    // Count how many times each digit is missing
+    function renderMissingNumbers() {
+      missingNumbersDiv.innerHTML = "";
+      const d = puzzleBoard.length;
+
+      // Count how many times each digit is needed
+      const neededCounts = new Array(d+1).fill(0); // index 0..d
+      for (let r = 0; r < d; r++) {
+        for (let c = 0; c < d; c++) {
+          if (puzzleBoard[r][c] === 0) {
+            const correctNum = solutionBoard[r][c];
+            neededCounts[correctNum]++;
+          }
+        }
+      }
+
+      // Create a draggable <div> for each needed digit
+      for (let num = 1; num <= d; num++) {
+        for (let i = 0; i < neededCounts[num]; i++) {
+          const wrapper = document.createElement("div");
+          wrapper.classList.add("draggable-wrapper");
+          wrapper.setAttribute("draggable", "true");
+          wrapper.innerHTML = createNumberSVG(num, 40);
+
+          wrapper.addEventListener("dragstart", (e) => {
+            e.dataTransfer.setData("text/plain", String(num));
+            e.dataTransfer.effectAllowed = "move";
+          });
+
+          missingNumbersDiv.appendChild(wrapper);
+        }
+      }
+    }
+
+    /* Drag & Drop logic */
+    function handleDragOver(e) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      e.currentTarget.classList.add("drop-hover");
+    }
+    function handleDragLeave(e) {
+      e.currentTarget.classList.remove("drop-hover");
+    }
+
+    function handleDrop(e) {
+      e.preventDefault();
+      e.currentTarget.classList.remove("drop-hover");
+
+      const num = parseInt(e.dataTransfer.getData("text/plain"));
+      const row = parseInt(e.currentTarget.getAttribute("data-row"));
+      const col = parseInt(e.currentTarget.getAttribute("data-col"));
+
+      // Check if valid with the puzzle's *current* state
+      if (isMoveValid(puzzleBoard, row, col, num)) {
+        // Place it
+        puzzleBoard[row][col] = num;
+        // Update cell
+        e.currentTarget.innerHTML = createNumberSVG(num, 40);
+        // Remove drop listeners
+        e.currentTarget.removeEventListener("dragover", handleDragOver);
+        e.currentTarget.removeEventListener("dragleave", handleDragLeave);
+        e.currentTarget.removeEventListener("drop", handleDrop);
+        // Re-render missing numbers
+        renderMissingNumbers();
+
+        // Check for completion
+        if (checkSolutionComplete()) {
+          showVictoryAnimation();
+        }
+      } else {
+        // Conflict => highlight
+        highlightConflicts(row, col, num);
+      }
+    }
+
+    /**
+     * isMoveValid: check row, column, and sub-box in the *puzzleBoard* only
+     */
+    function isMoveValid(board, row, col, val) {
+      const d = board.length;
+      // Row check
+      for (let c = 0; c < d; c++) {
+        if (board[row][c] === val) return false;
+      }
+      // Column check
+      for (let r = 0; r < d; r++) {
+        if (board[r][col] === val) return false;
+      }
+      // Box check
+      const [boxR, boxC] = getBoxDimensions(d);
+      const startR = Math.floor(row / boxR) * boxR;
+      const startC = Math.floor(col / boxC) * boxC;
+      for (let rr = startR; rr < startR + boxR; rr++) {
+        for (let cc = startC; cc < startC + boxC; cc++) {
+          if (board[rr][cc] === val) return false;
+        }
+      }
+      return true;
+    }
+
+    /**
+     * Highlight row, column, and box in red, then remove highlight after 1s
+     */
+    function highlightConflicts(row, col, val) {
+      const rows = sudokuGrid.querySelectorAll("tr");
+
+      // Mark helper
+      function markCell(r, c) {
+        rows[r].children[c].classList.add("conflict");
+      }
+
+      const d = puzzleBoard.length;
+      // Row
+      for (let cc = 0; cc < d; cc++) {
+        markCell(row, cc);
+      }
+      // Col
+      for (let rr = 0; rr < d; rr++) {
+        markCell(rr, col);
+      }
+      // Box
+      const [boxR, boxC] = getBoxDimensions(d);
+      const startR = Math.floor(row / boxR) * boxR;
+      const startC = Math.floor(col / boxC) * boxC;
+      for (let rr = startR; rr < startR + boxR; rr++) {
+        for (let cc = startC; cc < startC + boxC; cc++) {
+          markCell(rr, cc);
+        }
+      }
+
+      // Remove highlight after 1s
+      setTimeout(() => {
+        for (let r2 = 0; r2 < d; r2++) {
+          for (let c2 = 0; c2 < d; c2++) {
+            rows[r2].children[c2].classList.remove("conflict");
+          }
+        }
+      }, 1000);
+    }
+
+    /**
+     * Check if puzzleBoard matches solutionBoard fully
+     */
+    function checkSolutionComplete() {
+      const d = puzzleBoard.length;
+      for (let r = 0; r < d; r++) {
+        for (let c = 0; c < d; c++) {
+          if (puzzleBoard[r][c] !== solutionBoard[r][c]) {
+            return false;
+          }
+        }
+      }
+      return true;
+    }
+
+    function showVictoryAnimation() {
+      victoryEl.style.display = "block";
+      setTimeout(() => {
+        victoryEl.style.display = "none";
+      }, 3000);
+    }
+
+    /*****************************************/
+    /*         HELPER FUNCTIONS              */
+    /*****************************************/
+    // Fisher-Yates shuffle
+    function shuffleArray(arr) {
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+    }
+
+    /*****************************************/
+    /*     INITIAL PUZZLE ON PAGE LOAD       */
+    /****************<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Configurable Sudoku</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      position: relative; /* for victory message positioning */
+    }
+
+    #controls {
+      margin-bottom: 15px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+    }
+    .slider-label {
+      font-weight: bold;
+      margin-bottom: 4px;
+    }
+
+    #sudoku-container {
+      display: inline-block;
+      border: 2px solid black;
+      margin-bottom: 20px;
+    }
+
+    table {
+      border-collapse: collapse;
+      margin: 0 auto;
+    }
+
+    td {
+      width: 40px;  /* Adjust to your liking */
+      height: 40px;
+      text-align: center;
+      border: 1px solid #888;
+      vertical-align: middle;
+      position: relative;
+    }
+
+    /* Drag & drop hover highlight */
+    td.drop-hover {
+      outline: 2px dashed #000;
+    }
+
+    /* Thicker box boundary (drawn by row/col indices) */
+    .box-right {
+      border-right: 2px solid #000 !important;
+    }
+    .box-bottom {
+      border-bottom: 2px solid #000 !important;
+    }
+
+    /* Missing numbers container */
+    #missing-numbers {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-bottom: 10px;
+      max-width: 600px;
+    }
+
+    /* Draggable SVG wrapper */
+    .draggable-wrapper {
+      cursor: move;
+      width: 40px;
+      height: 40px;
+    }
+
+    /* Conflict highlighting/animation for row/column/box */
+    .conflict {
+      animation: conflictFlash 1s linear;
+      background-color: #ffcccc !important; 
+    }
+    @keyframes conflictFlash {
+      0%   { background-color: #ffcccc; }
+      50%  { background-color: #ff6666; }
+      100% { background-color: transparent; }
+    }
+
+    /* Victory animation / message */
+    #victory {
+      font-size: 2em;
+      color: green;
+      animation: fadeOut 3s forwards;
+      position: absolute;
+      top: 40%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255,255,255,0.8);
+      padding: 20px;
+      border-radius: 10px;
+      display: none;
+      text-align: center;
+    }
+
+    @keyframes fadeOut {
+      0%   { opacity: 1; }
+      80%  { opacity: 1; }
+      100% { opacity: 0; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Configurable Sudoku (4 to 9)</h1>
+
+  <div id="controls">
+    <!-- Board size slider -->
+    <div class="control-group">
+      <label class="slider-label" for="sizeSlider">Board Size:</label>
+      <input type
